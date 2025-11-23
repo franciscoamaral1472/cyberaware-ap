@@ -1,3 +1,10 @@
+from flask import Flask, request, jsonify
+
+# criar a app Flask
+app = Flask(__name__)
+
+
+# 1) Página de configuração (config_url) – GET sem parâmetros
 @app.get("/config")
 def config():
     html = """<!DOCTYPE html>
@@ -30,3 +37,26 @@ def config():
 </html>"""
     return html
 
+
+# 2) Lista de parâmetros de configuração (json_params_url) – GET sem parâmetros
+@app.get("/json-params")
+def json_params():
+    # Estes nomes têm de bater certo com os "name" dos campos na página /config
+    params = [
+        {"name": "duracao", "type": "integer"},
+        {"name": "dificuldade", "type": "text/plain"},
+        {"name": "instrucoes", "type": "text/plain"},
+    ]
+    return jsonify(params)
+
+
+# 3) Deploy da atividade (user_url) – GET com activityID
+@app.get("/deploy")
+def deploy():
+    activity_id = request.args.get("activityID", "")
+    deploy_url = f"https://cyberaware-ap.onrender.com/play?activityID={activity_id}"
+    return deploy_url
+
+
+# 4) Lista de analytics disponíveis (analytics_list_url) – GET sem parâmetros
+@app.get("/a
