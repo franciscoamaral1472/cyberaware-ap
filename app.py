@@ -1,10 +1,8 @@
 from flask import Flask, request, jsonify
 
-# criar a app Flask
 app = Flask(__name__)
 
-
-# 1) Página de configuração (config_url) – GET sem parâmetros
+# 1) Página de configuração
 @app.get("/config")
 def config():
     html = """<!DOCTYPE html>
@@ -30,7 +28,7 @@ def config():
   </label>
   <br/><br/>
 
-  <label>Instruções para o aluno:<br/>
+  <label>Instruções:<br/>
     <textarea name="instrucoes" rows="4" cols="50">Introdução à atividade CyberAware.</textarea>
   </label>
 </body>
@@ -38,25 +36,53 @@ def config():
     return html
 
 
-# 2) Lista de parâmetros de configuração (json_params_url) – GET sem parâmetros
+# 2) json_params_url
 @app.get("/json-params")
 def json_params():
-    # Estes nomes têm de bater certo com os "name" dos campos na página /config
-    params = [
+    return jsonify([
         {"name": "duracao", "type": "integer"},
         {"name": "dificuldade", "type": "text/plain"},
         {"name": "instrucoes", "type": "text/plain"},
-    ]
-    return jsonify(params)
+    ])
 
 
-# 3) Deploy da atividade (user_url) – GET com activityID
+# 3) Deploy (user_url)
 @app.get("/deploy")
 def deploy():
     activity_id = request.args.get("activityID", "")
-    deploy_url = f"https://cyberaware-ap.onrender.com/play?activityID={activity_id}"
-    return deploy_url
+    return f"https://cyberaware-ap.onrender.com/play?activityID={activity_id}"
 
 
-# 4) Lista de analytics disponíveis (analytics_list_url) – GET sem parâmetros
-@app.get("/a
+# 4) Lista de analytics
+@app.get("/analytics-list")
+def analytics_list():
+    return jsonify({
+        "qualAnalytics": [
+            {"name": "Student activity profile", "type": "URL"}
+        ],
+        "quantAnalytics": [
+            {"name": "Acedeu à atividade", "type": "boolean"},
+            {"name": "Progresso (%)", "type": "integer"}
+        ]
+    })
+
+
+# 5) Analytics de atividade
+@app.post("/analytics")
+def analytics():
+    body = request.get_json(silent=True) or {}
+    activity_id = body.get("activityID", "")
+
+    return jsonify([
+        {
+            "inveniraStdID": "1001",
+            "quantAnalytics": [
+                {"name": "Acedeu à atividade", "value": True},
+                {"name": "Progresso (%)", "value": 40},
+            ],
+            "qualAnalytics": [
+                {
+                    "Student activity profile":
+                        f"https://cyberaware-ap.onrender.com/analytics/profile?activityID={activity_id}&user=1001"
+                }
+
