@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify
+from abc import ABC, abstractmethod
 
 app = Flask(__name__)
 
@@ -31,7 +32,7 @@ class AnalyticsRepository:
             {"inveniraStdID": invenira_std_id, "quantAnalytics": [], "qualAnalytics": []}
         )
 
-        # Atualiza "Acedeu à atividade"
+        # Atualiza "Acedeu à atividade" (mantemos comportamento anterior)
         quant_list = [qa for qa in student_analytics["quantAnalytics"] if qa["name"] != "Acedeu à atividade"]
         quant_list.append({"name": "Acedeu à atividade", "value": True})
         student_analytics["quantAnalytics"] = quant_list
@@ -51,14 +52,63 @@ class AnalyticsRepository:
 
 
 # ============================================================
+#  STRATEGY: Analytics update behaviors
+# ============================================================
+
+class AnalyticsUpdateStrategy(ABC):
+    @abstractmethod
+    def update(self, repo: AnalyticsRepository, activity_id: str, user_id: str, args) -> None:
+        """Atualiza analytics para um evento de acesso/execução."""
+        raise NotImplementedError
+
+
+class SimpleAccessStrategy(AnalyticsUpdateStrategy):
+    """Registo mínimo: apenas assinala que o aluno acedeu à atividade."""
+    def update(self, repo: AnalyticsRepository, activity_id: str, user_id: str, args) -> None:
+        repo.register_student_event(activity_id, user_id, {"accessed": True})
+
+
+class ProgressAccessStrategy(AnalyticsUpdateStrategy):
+    """Registo com progresso: assinala acesso e atualiza Progresso (%), se possível."""
+    def update(self, repo: AnalyticsRepository, activity_id: str, user_id: str, args) -> None:
+        progresso_raw = args.get("progresso")
+        if progresso_raw is None or progresso_raw == "":
+            # Sem progresso fornecido: mantém comportamento de acesso simples
+            repo.register_student_event(activity_id, user_id, {"accessed": True})
+            return
+
+        try:
+            progresso = int(progresso_raw)
+        except (ValueError, TypeError):
+            # Progresso inválido: assume acesso simples (evita quebrar o fluxo)
+            repo.register_student_event(activity_id, user_id, {"accessed": True})
+            return
+
+        # Opcional: clamp 0..100 para coerência
+        if progresso < 0:
+            progresso = 0
+        if progresso > 100:
+            progresso = 100
+
+        repo.register_student_event(activity_id, user_id, {"accessed": True, "progresso": progresso})
+
+
+# ============================================================
 #  FACADE: CyberAwareFacade
 #  Encapsula operações principais do Activity Provider.
+#  Atua como "Context" para o padrão Strategy.
 # ============================================================
 
 class CyberAwareFacade:
     def __init__(self, base_url: str):
         self.base_url = base_url
         self.repo = AnalyticsRepository.get_instance()
+
+        # Mapa de estratégias disponíveis (extensível)
+        self._strategies = {
+            "simple": SimpleAccessStrategy(),
+            "progress": ProgressAccessStrategy(),
+        }
 
     def get_root_message(self) -> str:
         return "CyberAware Activity Provider – Flask is running!"
@@ -105,10 +155,35 @@ class CyberAwareFacade:
             ],
         }
 
-    def record_student_access(self, activity_id: str, user_id: str) -> str:
-        # Demonstração: ao entrar, regista "acedeu"
-        self.repo.register_student_event(activity_id, user_id, {"accessed": True})
-        return f"Aluno {user_id} iniciou a atividade {activity_id}."
+    def _select_strategy(self, mode: str, args) -> AnalyticsUpdateStrategy:
+        """
+        Seleciona a estratégia:
+        - Se mode for válido, usa-o.
+        - Caso contrário, se houver 'progresso', usa progress.
+        - Default: simple.
+        """
+        mode_norm = (mode or "").strip().lower()
+        if mode_norm in self._strategies:
+            return self._strategies[mode_norm]
+
+        # Inferência por contexto
+        if args.get("progresso") not in (None, ""):
+            return self._strategies["progress"]
+
+        return self._strategies["simple"]
+
+    def record_student_access(self, activity_id: str, user_id: str, mode: str, args) -> str:
+        # Aplica Strategy para registar analytics conforme contexto
+        strategy = self._select_strategy(mode, args)
+        strategy.update(self.repo, activity_id, user_id, args)
+
+        # Mensagem simples para feedback (útil para teste)
+        mode_norm = (mode or "").strip().lower()
+        if mode_norm not in ("simple", "progress"):
+            # se foi inferido
+            mode_norm = "progress" if args.get("progresso") not in (None, "") else "simple"
+
+        return f"Aluno {user_id} iniciou a atividade {activity_id} (mode={mode_norm})."
 
     def get_analytics(self, activity_id: str):
         # Devolve analytics no formato esperado pela Inven!RA
@@ -120,7 +195,7 @@ FACADE = CyberAwareFacade(base_url="https://cyberaware-ap.onrender.com")
 
 
 # ============================================================
-#  ENDPOINTS (agora finos: delegam na Facade)
+#  ENDPOINTS (finos: delegam na Facade)
 # ============================================================
 
 @app.get("/")
@@ -161,7 +236,13 @@ def analytics():
 def play():
     activity_id = request.args.get("activityID", "unknown")
     user_id = request.args.get("user", "1001")
-    return FACADE.record_student_access(activity_id, user_id)
+
+    # Novos parâmetros para o Strategy:
+    # - mode: "simple" | "progress" (default: simple)
+    # - progresso: inteiro opcional (0..100 recomendado)
+    mode = request.args.get("mode", "simple")
+
+    return FACADE.record_student_access(activity_id, user_id, mode, request.args)
 
 
 if __name__ == "__main__":
